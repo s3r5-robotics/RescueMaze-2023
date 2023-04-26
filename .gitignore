@@ -1,0 +1,9 @@
+# PyCharm
+/.idea/*
+!/.idea/*.iml
+
+# Python virtual environment
+SW/venv
+
+# Adafruit libraries are downloaded from GitHub directly
+SW/lib/adafruit-circuitpython-bundle-py
