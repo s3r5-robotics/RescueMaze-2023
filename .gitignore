@@ -4,6 +4,8 @@
 
 # Python virtual environment
 SW/venv
+# Configuration file
+SW/circuitpy_drive.txt
 
 # Adafruit libraries are downloaded from GitHub directly
 SW/lib/adafruit-circuitpython-bundle-py
