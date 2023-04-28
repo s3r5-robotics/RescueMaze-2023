@@ -7,3 +7,7 @@ SW/venv
 
 # Adafruit libraries are downloaded from GitHub directly
 SW/lib/adafruit-circuitpython-bundle-py
+# Some tools are also downloaded locally
+SW/tools/mpy-cross*
+# Compiled files can be compiled on the way
+SW/compiled
