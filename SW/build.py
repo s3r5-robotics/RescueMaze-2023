@@ -224,6 +224,7 @@ def main() -> None:
     # https://learn.adafruit.com/welcome-to-circuitpython/pycharm-and-circuitpython#creating-a-project-on-a-computers-file-system-3105042
     # as this script copies all required files to the device and keeps them in sync.
     main_script = src_dir.joinpath("code.py")
+    boot_script = src_dir.joinpath("boot.py")
 
     check_dirs()
     check_adafruit_libraries()
@@ -233,7 +234,7 @@ def main() -> None:
     # Optionally cpy all files to the device
     target_drive = check_circuitpy_drive()
     if target_drive:
-        sync_files([main_script], mpy_files, target_drive)
+        sync_files([main_script, boot_script], mpy_files, target_drive)
 
 
 main()
