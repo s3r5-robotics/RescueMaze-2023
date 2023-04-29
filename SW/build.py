@@ -11,7 +11,7 @@ import tempfile
 import urllib.request
 import zipfile
 from io import BytesIO
-from modulefinder import ModuleFinder
+from modulefinder import ModuleFinder, Module
 from pathlib import Path
 from types import ModuleType
 from typing import List, Iterable, Tuple, Dict, Optional, Collection
@@ -54,33 +54,25 @@ def check_adafruit_libraries() -> None:
         download_adafruit_bundle(dp)
 
 
-def check_module_requirements(for_script: Path) -> List[ModuleType]:
+def check_module_requirements(for_script: Path) -> List[Module]:
     script = for_script.resolve()
 
     print(f"### Checking module requirements for {script}")
 
-    # The target script will be run on the target device using CircuitPython runtime,
-    # not the runtime and environment that this current script is running in.
-    # Therefore, do not use default sys.path for importing the modules!
-    finder = ModuleFinder(path=[])
-    # Run the script once to get the list of all modules that were imported or attempted to be imported
-    finder.run_script(script.as_posix())
-    # Successfully imported modules are built-in modules (empty path)
-    modules = list(finder.modules.keys())
-    print(f"{script} uses built-in modules: {', '.join(m for m in modules if m != '__main__')}")
-    # Modules failed to import are most likely CircuitPython libraries
-
-    # Rerun the script with CircuitPython library paths added
+    # The target script will be run on the target device using CircuitPython runtime, not the runtime
+    # and environment that this current script is running in. Therefore, do not use default sys.path
+    # for importing the modules, but use the CircuitPython library paths.
     finder = ModuleFinder(path=[script.parent.as_posix(), lib_dir.resolve().as_posix()] +
                                [dp.as_posix() for dp in lib_dir.resolve().glob("*/lib")])
     finder.run_script(script.as_posix())
-    # All modules which failed to import initially, but are successfully imported now,
-    # are CircuitPython libraries located in the provided library paths.
-    required_modules = {name: module for name, module in finder.modules.items() if name not in modules}
+    # All "non-file" modules are built-in modules
+    print(f"{script} uses built-in modules: {', '.join(m.__name__ for m in finder.modules.values() if not m.__file__)}")
+    # Others are CircuitPython libraries, which can either be single file or a directory
+    modules = [m for m in finder.modules.values() if m.__file__ and m.__name__ != "__main__"]
 
-    print(f"{script} uses CircuitPython libraries: {', '.join(required_modules)}")
+    print(f"{script} uses CircuitPython libraries: {', '.join(m.__name__ for m in modules)}")
 
-    return list(required_modules.values())
+    return modules
 
 
 def download_mpy_cross() -> None:
