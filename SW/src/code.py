@@ -2,18 +2,20 @@ import sys
 import time
 
 import board
+import busio
 import digitalio
 import microcontroller
 # noinspection PyUnresolvedReferences
 from micropython import const
 
 import adafruit_vl53l1x
+import dynamixel
 import neopixel
 
 try:
     # This is only needed for typing
     from typing import Tuple
-    from busio import I2C
+    from busio import I2C, UART
 except ImportError:
     pass
 
@@ -81,6 +83,28 @@ class DistanceSensor(adafruit_vl53l1x.VL53L1X):
         return round(d * 10)
 
 
+class DynamixelMotor(dynamixel.Dynamixel):
+    # https://emanual.robotis.com/docs/en/dxl/ax/ax-12w/
+
+    def __init__(self, uart: UART, motor_id: int, reverse_direction: bool = False):
+        super().__init__(uart, motor_id)
+        self.reverse_direction = reverse_direction
+        self.speed = 0
+        self.torque_enable = True
+
+    @dynamixel.Dynamixel.speed.setter
+    def speed(self, speed: float) -> None:
+        # https://emanual.robotis.com/docs/en/dxl/ax/ax-12w/#moving-speed
+        # TODO: Try to regulate speed
+        if self.reverse_direction:
+            speed = -speed
+        if speed < 0:
+            raw_speed = min(1.0, -speed) * 1023
+        else:
+            raw_speed = min(1.0, speed) * 1023 + 1024
+        self.set_register_dual(dynamixel.DYN_REG_MOVING_SPEED_L, int(raw_speed))
+
+
 def get_gpio(of_pin: microcontroller.Pin) -> str:
     # noinspections PyUnresolvedReferences
     pins = microcontroller.pin
@@ -111,12 +135,16 @@ def main():
 
     # Initialize integrated peripherals
     i2c = board.STEMMA_I2C()
+    dyna_uart = busio.UART(PIN_DYNA_UART_TX, PIN_DYNA_UART_RX, baudrate=1000000, timeout=0.1)
     # Initialize onboard peripherals
     pixel = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.5)
     # Initialize distance sensors
     ds_front = DistanceSensor(i2c, PIN_DISTANCE_POWER_FRONT, 0x30)
     ds_left = DistanceSensor(i2c, PIN_DISTANCE_POWER_LEFT, 0x31)
     ds_right = DistanceSensor(i2c, PIN_DISTANCE_POWER_RIGHT, 0x32)
+    # Motors
+    ml = DynamixelMotor(dyna_uart, 6, reverse_direction=True)
+    mr = DynamixelMotor(dyna_uart, 4)
 
     while True:
         # Wait for all sensors to have new data
@@ -128,6 +156,12 @@ def main():
 
         max_dist = 500
         pixel.fill(get_color_gradient(min(min(front, left, right) / max_dist, 1)))
+
+        max_speed = 0.3
+        speed_ratio = min(max((front - (max_dist / 2)) / (max_dist / 2), -1), 1)
+        speed = speed_ratio * max_speed
+        ml.speed = speed
+        mr.speed = speed
 
 
 main()
