@@ -152,7 +152,21 @@ def wait_for_button_to_start(button: Button, pixel: neopixel.NeoPixel,
     time.sleep(0.5)
 
 
-def main():
+def check_loop_frame_rate(freq: int, loop_start_time: float) -> float:
+    # returns CPU usage in percent
+    loop_delay = 1 / freq
+
+    # Ensure loop runs at constant frequency
+    t_loop = time.monotonic() - loop_start_time
+    if t_loop > loop_delay:
+        print(f"Can't keep up at {freq} Hz ({t_loop} > {loop_delay})")
+    elif t_loop < loop_delay:
+        time.sleep(loop_delay - t_loop)
+
+    return round(100 * t_loop / loop_delay)
+
+
+def main(loop_frequency: int = 50):
     # CircuitPython throws SyntaxError for multiline f-strings - either use single line or concatenation
     print(f"\nRunning on {board.board_id} ({sys.platform}), {sys.implementation.name} " +
           f"{sys.version}/{'.'.join(map(str, sys.implementation.version))}, mpy {sys.implementation.mpy}")
@@ -175,18 +189,17 @@ def main():
 
     wait_for_button_to_start(button, pixel)
 
+    cpu_usage = 0
     while True:
+        t_loop_begin = time.monotonic()
+
         button.update()
         if button.pressed:
             print("Button pressed, exiting")
             break
 
-        # Wait for all sensors to have new data
-        while not (ds_front.new_data and ds_left.new_data and ds_right.new_data):
-            time.sleep(0.001)
+        # Read distance sensors
         front, left, right = ds_front.mm, ds_left.mm, ds_right.mm
-
-        print(f"Range (cm): {left: >5d} // {front: ^5d} \\\\ {right: <5d}")
 
         max_dist = 500
         pixel.fill(get_color_gradient(min(min(front, left, right) / max_dist, 1)))
@@ -196,6 +209,10 @@ def main():
         speed = speed_ratio * max_speed
         ml.speed = speed
         mr.speed = speed
+
+        print(f"CPU {cpu_usage}%, range (cm): {left: >5d} // {front: ^5d} \\\\ {right: <5d}, sr {speed_ratio:.3f}")
+
+        cpu_usage = check_loop_frame_rate(loop_frequency, t_loop_begin)
 
     # Main program done, disable motors
     pixel.fill(0xFF0000)
