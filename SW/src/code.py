@@ -11,6 +11,7 @@ from micropython import const
 import adafruit_vl53l1x
 import dynamixel
 import neopixel
+from adafruit_debouncer import Button
 
 try:
     # This is only needed for typing
@@ -19,6 +20,7 @@ try:
 except ImportError:
     pass
 
+# https://cdn-learn.adafruit.com/assets/assets/000/110/811/original/adafruit_products_Adafruit_Feather_ESP32-S3_Pinout.png?1649958374
 PIN_DYNA_UART_RX = microcontroller.pin.GPIO38  # UART RX, Dyna RXTX
 PIN_DYNA_UART_TX = microcontroller.pin.GPIO39  # UART TX, via 1kOhm to Dyna RXTX
 PIN_DISTANCE_POWER_FRONT = microcontroller.pin.GPIO18
@@ -30,8 +32,9 @@ PIN_DISTANCE_INT_RIGHT = microcontroller.pin.GPIO8
 # PIN_CAMERA_CABLE_1 (blue colored wire) is GND
 # PIN_CAMERA_CABLE_2 is +5V
 PIN_CAMERA_CABLE_3 = microcontroller.pin.GPIO13  # To ESP32-CAM GPIO13
-PIN_CAMERA_CABLE_4 = microcontroller.pin.GPIO12  # To ESP32-CAM GPIO12
-PIN_CAMERA_CABLE_5 = microcontroller.pin.GPIO11  # Button to GND
+PIN_CAMERA_CABLE_4 = microcontroller.pin.GPIO12  # To ESP32-CAM GPIO15
+PIN_CAMERA_CABLE_5 = microcontroller.pin.GPIO11  # To ESP32-CAM GPIO14
+PIN_BUTTON = microcontroller.pin.GPIO10  # Button to GND
 
 
 class DistanceSensor(adafruit_vl53l1x.VL53L1X):
@@ -128,6 +131,27 @@ def get_color_gradient(amplitude: float) -> Tuple[int, int, int]:
         return 0x00, int(0xFF * (1 - amplitude) * 2), int(0xFF * amplitude * 2)
 
 
+def wait_for_button_to_start(button: Button, pixel: neopixel.NeoPixel,
+                             led_delay: float = 0.01, led_brightness: int = 0x20) -> None:
+    print("Waiting for button press")
+    while not button.pressed:
+        button.update()
+        pixel.fill((led_brightness, 0, 0))
+        time.sleep(led_delay)
+        pixel.fill((0, led_brightness, 0))
+        time.sleep(led_delay)
+        pixel.fill((0, 0, led_brightness))
+        time.sleep(led_delay)
+    print("Button pressed, start!")
+
+    pixel.fill(0xFF0000)
+    time.sleep(0.5)
+    pixel.fill(0x7F7F00)
+    time.sleep(0.5)
+    pixel.fill(0x00FF00)
+    time.sleep(0.5)
+
+
 def main():
     # CircuitPython throws SyntaxError for multiline f-strings - either use single line or concatenation
     print(f"\nRunning on {board.board_id} ({sys.platform}), {sys.implementation.name} " +
@@ -137,6 +161,9 @@ def main():
     i2c = board.STEMMA_I2C()
     dyna_uart = busio.UART(PIN_DYNA_UART_TX, PIN_DYNA_UART_RX, baudrate=1000000, timeout=0.1)
     # Initialize onboard peripherals
+    pin = digitalio.DigitalInOut(PIN_BUTTON)
+    pin.switch_to_input(digitalio.Pull.UP)
+    button = Button(pin)
     pixel = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.5)
     # Initialize distance sensors
     ds_front = DistanceSensor(i2c, PIN_DISTANCE_POWER_FRONT, 0x30)
@@ -146,7 +173,14 @@ def main():
     ml = DynamixelMotor(dyna_uart, 6, reverse_direction=True)
     mr = DynamixelMotor(dyna_uart, 4)
 
+    wait_for_button_to_start(button, pixel)
+
     while True:
+        button.update()
+        if button.pressed:
+            print("Button pressed, exiting")
+            break
+
         # Wait for all sensors to have new data
         while not (ds_front.new_data and ds_left.new_data and ds_right.new_data):
             time.sleep(0.001)
@@ -162,6 +196,11 @@ def main():
         speed = speed_ratio * max_speed
         ml.speed = speed
         mr.speed = speed
+
+    # Main program done, disable motors
+    pixel.fill(0xFF0000)
+    ml.torque_enable = False
+    mr.torque_enable = False
 
 
 main()
