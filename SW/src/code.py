@@ -166,26 +166,27 @@ def check_loop_frame_rate(freq: int, loop_start_time: float) -> float:
     return round(100 * t_loop / loop_delay)
 
 
+# Initialize integrated peripherals
+i2c = board.STEMMA_I2C()
+dyna_uart = busio.UART(PIN_DYNA_UART_TX, PIN_DYNA_UART_RX, baudrate=1000000, timeout=0.1)
+# Initialize onboard peripherals
+pin = digitalio.DigitalInOut(PIN_BUTTON)
+pin.switch_to_input(digitalio.Pull.UP)
+button = Button(pin)
+pixel = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.5)
+# Initialize distance sensors
+ds_front = DistanceSensor(i2c, PIN_DISTANCE_POWER_FRONT, 0x30)
+ds_left = DistanceSensor(i2c, PIN_DISTANCE_POWER_LEFT, 0x31)
+ds_right = DistanceSensor(i2c, PIN_DISTANCE_POWER_RIGHT, 0x32)
+# Motors
+ml = DynamixelMotor(dyna_uart, 6, reverse_direction=True)
+mr = DynamixelMotor(dyna_uart, 4)
+
+
 def main(loop_frequency: int = 50):
     # CircuitPython throws SyntaxError for multiline f-strings - either use single line or concatenation
     print(f"\nRunning on {board.board_id} ({sys.platform}), {sys.implementation.name} " +
           f"{sys.version}/{'.'.join(map(str, sys.implementation.version))}, mpy {sys.implementation.mpy}")
-
-    # Initialize integrated peripherals
-    i2c = board.STEMMA_I2C()
-    dyna_uart = busio.UART(PIN_DYNA_UART_TX, PIN_DYNA_UART_RX, baudrate=1000000, timeout=0.1)
-    # Initialize onboard peripherals
-    pin = digitalio.DigitalInOut(PIN_BUTTON)
-    pin.switch_to_input(digitalio.Pull.UP)
-    button = Button(pin)
-    pixel = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.5)
-    # Initialize distance sensors
-    ds_front = DistanceSensor(i2c, PIN_DISTANCE_POWER_FRONT, 0x30)
-    ds_left = DistanceSensor(i2c, PIN_DISTANCE_POWER_LEFT, 0x31)
-    ds_right = DistanceSensor(i2c, PIN_DISTANCE_POWER_RIGHT, 0x32)
-    # Motors
-    ml = DynamixelMotor(dyna_uart, 6, reverse_direction=True)
-    mr = DynamixelMotor(dyna_uart, 4)
 
     wait_for_button_to_start(button, pixel)
 
@@ -216,8 +217,11 @@ def main(loop_frequency: int = 50):
 
     # Main program done, disable motors
     pixel.fill(0xFF0000)
+    button.update()
     ml.torque_enable = False
     mr.torque_enable = False
+    time.sleep(1)
 
 
-main()
+while True:
+    main()
