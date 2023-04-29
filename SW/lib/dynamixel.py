@@ -174,7 +174,7 @@ class Dynamixel:
         time.sleep(0.001)  # Wait a bit for the response
         return self._uart.read(response_length)
 
-    def _command(self, instruction: int, write_data: bytes = b'', response_len: Optional[int] = 0) -> bytes:
+    def _write_command(self, instruction: int, write_data: bytes = b'', response_len: Optional[int] = 0) -> bytes:
         # TX length is always at least 2 for instruction and checksum
         tx_len = 2 + len(write_data)
         # RX length is always at least 6 for status packet, except for broadcast when there is no response
@@ -195,6 +195,14 @@ class Dynamixel:
         if self.last_error != DYN_ERR_NONE:
             raise RuntimeError(f"Exec 0x{instruction:02x} on motor ID {self.id} resulted in {self.last_error:02x}")
         return rsp
+
+    def _command(self, instruction: int, write_data: bytes = b'', response_len: Optional[int] = 0) -> bytes:
+        # Retry command once if failed (e.g. due to high baud rate and noise)
+        try:
+            return self._write_command(instruction, write_data, response_len)
+        except RuntimeError:
+            time.sleep(0.005)
+        return self._write_command(instruction, write_data, response_len)
 
     # -----------------------
     # Dynamixel Instructions:
