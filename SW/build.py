@@ -19,7 +19,7 @@ from xml.etree import ElementTree
 lib_dir = Path("lib")
 src_dir = Path("src")
 tools_dir = Path("tools")
-compiled_dir = Path("compiled")
+compiled_dir = Path("compiled", "lib")
 
 mpy_cross = tools_dir.joinpath(f"mpy-cross{Path(sys.executable).suffix}").resolve()
 
