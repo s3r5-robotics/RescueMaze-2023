@@ -127,6 +127,10 @@ def download_mpy_cross() -> None:
     mpy_cross.chmod(mpy_cross.stat().st_mode | stat.S_IEXEC)
 
 
+def get_existing_compiled_modules() -> List[Path]:
+    return [p.resolve() for p in compiled_dir.glob("**/*.mpy")]
+
+
 def get_module_paths(modules: Collection[Module]) -> Iterable[Tuple[Path, Path]]:
     for module in sorted(modules, key=lambda m: m.__file__):
         fp_in = Path(module.__file__)
@@ -153,6 +157,8 @@ def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Pa
 
     # mpy-cross is used for compiling Python modules to bytecode
     download_mpy_cross()
+
+    existing_files = get_existing_compiled_modules()
 
     workers: Dict[Tuple[Path, Path], Optional[subprocess.Popen]] = {}
     for fp_in, fp_out in get_module_paths(modules):
@@ -190,7 +196,13 @@ def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Pa
 
         print(f"Compiled {fp_in} to {fp_out} ({fp_out.stat().st_size} bytes)")
 
-    return [fp_out for fp_in, fp_out in workers.keys()]
+    compiled_files = [fp_out for fp_in, fp_out in workers.keys()]
+
+    for file in sorted(set(existing_files) - set(compiled_files)):
+        print(f"Removing {file} (not used anymore)")
+        file.unlink()
+
+    return compiled_files
 
 
 def check_circuitpy_drive() -> Optional[Path]:
