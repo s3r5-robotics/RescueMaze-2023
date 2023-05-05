@@ -13,7 +13,6 @@ import zipfile
 from io import BytesIO
 from modulefinder import ModuleFinder, Module
 from pathlib import Path
-from types import ModuleType
 from typing import List, Iterable, Tuple, Dict, Optional, Collection
 from xml.etree import ElementTree
 
@@ -128,17 +127,35 @@ def download_mpy_cross() -> None:
     mpy_cross.chmod(mpy_cross.stat().st_mode | stat.S_IEXEC)
 
 
-def compile_modules(modules: Collection[ModuleType], debug: bool = False) -> List[Path]:
+def get_module_paths(modules: Collection[Module]) -> Iterable[Tuple[Path, Path]]:
+    for module in sorted(modules, key=lambda m: m.__file__):
+        fp_in = Path(module.__file__)
+
+        # Directory structure of the compiled modules must stay the same as the original modules!
+        if module.__name__ != fp_in.stem:
+            # This is a package, keep the directory structure
+            sub_dirs = module.__name__.split(".")
+            # If the last part is the same as the file name (instead of __init__),
+            # then this is the module inside a package - remove it as subdir.
+            if sub_dirs[-1] == fp_in.stem:
+                sub_dirs.pop()
+        else:
+            # This is a single-file module
+            sub_dirs = []
+
+        fp_out = compiled_dir.joinpath(*sub_dirs, fp_in.stem + ".mpy")
+
+        yield fp_in.resolve(), fp_out.resolve()
+
+
+def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Path]:
     print(f"### Compiling {len(modules)} modules to {compiled_dir}")
 
     # mpy-cross is used for compiling Python modules to bytecode
     download_mpy_cross()
 
     workers: Dict[Tuple[Path, Path], Optional[subprocess.Popen]] = {}
-    for module in modules:
-        fp_in = Path(module.__file__)
-        fp_out = compiled_dir.joinpath(f"{module.__name__}.mpy").resolve()
-
+    for fp_in, fp_out in get_module_paths(modules):
         # If the file exists and was not changed since last compilation, skip it
         if fp_out.exists():
             if fp_out.stat().st_mtime == fp_in.stat().st_mtime:
@@ -149,6 +166,9 @@ def compile_modules(modules: Collection[ModuleType], debug: bool = False) -> Lis
                 print(f"Recompiling {fp_in} to {fp_out} (changed)")
         else:
             print(f"Compiling {fp_in} to {fp_out} (new)")
+
+        # Make sure that the output directory exists
+        fp_out.parent.mkdir(parents=True, exist_ok=True)
 
         workers[fp_in, fp_out] = subprocess.Popen([
             mpy_cross.as_posix(),
