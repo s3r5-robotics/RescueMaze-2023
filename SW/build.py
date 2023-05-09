@@ -1,5 +1,6 @@
 import filecmp
 import json
+import modulefinder
 import os
 import platform
 import re
@@ -11,9 +12,9 @@ import tempfile
 import urllib.request
 import zipfile
 from io import BytesIO
-from modulefinder import ModuleFinder, Module
+from modulefinder import ModuleFinder
 from pathlib import Path
-from typing import List, Iterable, Tuple, Dict, Optional, Collection
+from typing import List, Tuple, Dict, Optional, Collection
 from xml.etree import ElementTree
 
 # Note: all files from the main script's directory will be copied to the target CircuitPython drive!
@@ -24,6 +25,59 @@ COMPILED_DIR = Path("compiled", "lib").resolve()
 DEPLOY_DIR_CFG_FILE = Path("circuitpy_drive.txt").resolve()
 # Use the same extension as the current Python executable to ensure simple cross-platform executable name
 MPY_CROSS_PATH = Path("tools", f"mpy-cross{Path(sys.executable).suffix}").resolve()
+
+
+class Module(modulefinder.Module):
+
+    @classmethod
+    def from_module(cls, module: modulefinder.Module) -> "Module":
+        return cls(module.__name__, module.__file__, module.__path__)
+
+    def __str__(self) -> str:
+        return self.__name__
+
+    @property
+    def is_built_in(self) -> bool:
+        # All modules without a __file__ attribute are built-in modules
+        return not self.__file__
+
+    @property
+    def module_path(self) -> Path:
+        """Get absolute path to the module file (raise ValueError if this is a built-in module)"""
+        if self.is_built_in:
+            raise ValueError(f"Module {self.__name__} is built-in")
+        return Path(self.__file__).resolve()
+
+    @property
+    def package_path(self) -> Optional[Path]:
+        """Get relative package path of this module, or None if this is a single-file module"""
+        # A package is a directory of Python modules containing an additional __init__.py file (to distinguish
+        # a package from a directory that just happens to contain a bunch of Python scripts). Packages can be
+        # nested to any depth, provided that the corresponding directories contain their own __init__.py file.
+        # However, modules inside the package may not have the .__path__ attribute set, even if they are inside
+        # the package - depends on how they are imported. Therefore, perform additional check with the module
+        # name - modules cannot have dots in their name (but packages can) - dot in Python module name
+        # represents the sub-package structure.
+        mfp = self.module_path
+        if self.__name__ == mfp.stem:
+            # This is a single-file module
+            return None
+        # This is a module inside a package
+        sub_dirs = self.__name__.split(".")
+        # If the last part is the same as the file name (instead of __init__), then this is a directly
+        # imported module inside a package - remove it, because it is not a (sub)directory.
+        if sub_dirs[-1] == mfp.stem:
+            sub_dirs.pop()
+        return Path(*sub_dirs)
+
+    @property
+    def is_package(self) -> bool:
+        return self.package_path and self.module_path.stem == "__init__"
+
+    @property
+    def package_relative(self) -> Path:
+        """Get module path relative to the package, or just the file name if this module is not in a package"""
+        return Path(self.package_path or "", self.module_path.name)
 
 
 def ensure_adafruit_libraries() -> None:
@@ -63,12 +117,18 @@ def check_module_requirements(script: Path) -> List[Module]:
     finder = ModuleFinder(path=[script.parent.as_posix(), LIB_DIR.as_posix()] +
                                [dp.as_posix() for dp in LIB_DIR.glob("*/lib")])
     finder.run_script(script.as_posix())
-    # All "non-file" modules are built-in modules
-    print(f"{script} uses built-in modules: {', '.join(m.__name__ for m in finder.modules.values() if not m.__file__)}")
-    # Others are CircuitPython libraries, which can either be single file or a directory
-    modules = [m for m in finder.modules.values() if m.__file__ and m.__name__ != "__main__"]
+    # Enclose modules in helper class and exclude __main__, which is the target script itself.
+    modules = [Module.from_module(m) for m in finder.modules.values() if m.__name__ != "__main__"]
+    # List the built-in modules for information purposes, but then ignore them as they don't need to be compiled.
+    print(f"{script} uses built-in modules: {', '.join(str(m) for m in modules if m.is_built_in)}")
+    modules = [m for m in modules if not m.is_built_in]
 
-    print(f"{script} uses CircuitPython libraries: {', '.join(m.__name__ for m in modules)}")
+    print(f"{script} uses CircuitPython modules:"
+          f" {', '.join(str(m) for m in modules if not m.package_path)}")
+    print(f"{script} uses CircuitPython packages:"
+          f" {', '.join(str(m) for m in modules if m.is_package)}")
+    print(f"{script} uses CircuitPython package modules:"
+          f" {', '.join(str(m) for m in modules if m.package_path and not m.is_package)}")
 
     return modules
 
@@ -131,42 +191,27 @@ def download_mpy_cross() -> Path:
     return mpy_cross
 
 
-def get_module_paths(modules: Collection[Module]) -> Iterable[Tuple[Path, Path]]:
-    for module in sorted(modules, key=lambda m: m.__file__):
-        fp_in = Path(module.__file__).resolve()
-
-        # Directory structure of the compiled modules must stay the same as the original modules!
-        if module.__name__ != fp_in.stem:
-            # This is a package, keep the directory structure
-            sub_dirs = module.__name__.split(".")
-            # If the last part is the same as the file name (instead of __init__),
-            # then this is the module inside a package - remove it as subdir.
-            if sub_dirs[-1] == fp_in.stem:
-                sub_dirs.pop()
-        else:
-            # This is a single-file module
-            sub_dirs = []
-
-        fp_out = COMPILED_DIR.joinpath(*sub_dirs, fp_in.stem + ".mpy")
-
-        yield fp_in, fp_out
-
-
-def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Path]:
+def compile_modules(modules: Collection[Module], debug: bool = False):
     print(f"### Compiling {len(modules)} modules to {COMPILED_DIR}")
 
     # mpy-cross is used for compiling Python modules to bytecode
     mpy_cross = download_mpy_cross()
 
-    existing_files = COMPILED_DIR.glob("**/*.mpy")
+    # Mark all existing compiled files for deletion, for cleanup purposes
+    files_to_remove = set(COMPILED_DIR.glob("**/*.mpy"))
+    # Generate dict of files to compile (in path, out path), mapped to optional compilation process
+    compiled_files: Dict[Tuple[Path, Path], subprocess.Popen] = {}
 
-    workers: Dict[Tuple[Path, Path], Optional[subprocess.Popen]] = {}
-    for fp_in, fp_out in get_module_paths(modules):
+    for module in modules:
+        fp_in = module.module_path
+        fp_out = COMPILED_DIR.joinpath(module.package_relative).with_suffix(".mpy")
+        # Each file present here is required, so it shall not be cleaned afterward
+        files_to_remove.discard(fp_out)
+
         # If the file exists and was not changed since last compilation, skip it
         if fp_out.exists():
             if fp_out.stat().st_mtime == fp_in.stat().st_mtime:
                 print(f"Skipping {fp_in} (unchanged)")
-                workers[fp_in, fp_out] = None
                 continue
             else:
                 print(f"Recompiling {fp_in} to {fp_out} (changed)")
@@ -175,7 +220,7 @@ def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Pa
             # Make sure that the output directory exists
             fp_out.parent.mkdir(parents=True, exist_ok=True)
 
-        workers[fp_in, fp_out] = subprocess.Popen([
+        compiled_files[fp_in, fp_out] = subprocess.Popen([
             mpy_cross.as_posix(),
             # https://docs.micropython.org/en/latest/library/micropython.html#micropython.opt_level
             "-O0" if debug else "-O3",
@@ -183,25 +228,20 @@ def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Pa
             fp_in.as_posix()
         ], text=True)
 
-    for (fp_in, fp_out), proc in workers.items():
-        if not proc:
-            continue
-        proc.wait(5)
-        if proc.returncode:
-            exit(f"Failed to execute `{' '.join(proc.args)}`: {proc.returncode} ({proc.stderr})")
+    for (fp_in, fp_out), worker in compiled_files.items():
+        worker.wait(5)
+        if worker.returncode:
+            exit(f"Failed to execute `{' '.join(worker.args)}`: {worker.returncode} ({worker.stderr})")
         # Compilation can take undetermined amount of time, so adjust modification time of the output file
         # to be the same as the input file, to enable skipping unchanged files on subsequent runs.
         os.utime(fp_out, (fp_out.stat().st_atime, fp_in.stat().st_mtime))
 
         print(f"Compiled {fp_in} to {fp_out} ({fp_out.stat().st_size} bytes)")
 
-    compiled_files = [fp_out for fp_in, fp_out in workers.keys()]
-
-    for file in sorted(set(existing_files) - set(compiled_files)):
+    # Cleanup all files that were compiled before but are not required anymore
+    for file in files_to_remove:
         print(f"Removing {file} (not used anymore)")
         file.unlink()
-
-    return compiled_files
 
 
 def check_circuitpy_drive() -> Optional[Path]:
@@ -218,11 +258,15 @@ def check_circuitpy_drive() -> Optional[Path]:
     return path
 
 
-def sync_files(libs: Iterable[Path], target_drive: Path) -> None:
+def sync_files(target_drive: Path) -> None:
     main_dir = MAIN_SCRIPT.parent
     files = {
-        **{fp: target_drive.joinpath(fp.relative_to(main_dir)) for fp in main_dir.glob("**/*") if fp.is_file()},
-        **{fp: target_drive.joinpath("lib", fp.name) for fp in libs}
+        # All files from the directory containing the main script
+        **{fp: target_drive.joinpath(fp.relative_to(main_dir))
+           for fp in main_dir.glob("**/*") if fp.is_file()},
+        # All compiled files
+        **{fp: target_drive.joinpath("lib", fp.relative_to(COMPILED_DIR))
+           for fp in COMPILED_DIR.glob("**/*") if fp.is_file()}
     }
 
     print(f"### Syncing {len(files)} files to {target_drive}")
@@ -247,12 +291,12 @@ def main() -> None:
     # as this script copies all required files to the device and keeps them in sync.
     ensure_adafruit_libraries()
     modules = check_module_requirements(MAIN_SCRIPT)
-    mpy_files = compile_modules(modules)
+    compile_modules(modules)
 
     # Optionally copy all files to the device
     target_drive = check_circuitpy_drive()
     if target_drive:
-        sync_files(mpy_files, target_drive)
+        sync_files(target_drive)
 
 
 main()
