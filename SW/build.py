@@ -19,18 +19,25 @@ from xml.etree import ElementTree
 # Note: all files from the main script's directory will be copied to the target CircuitPython drive!
 MAIN_SCRIPT = Path("src", "code.py").resolve()
 LIB_DIR = Path("lib").resolve()
-TOOLS_DIR = Path("tools").resolve()
 COMPILED_DIR = Path("compiled", "lib").resolve()
+
 DEPLOY_DIR_CFG_FILE = Path("circuitpy_drive.txt").resolve()
+# Use the same extension as the current Python executable to ensure simple cross-platform executable name
+MPY_CROSS_PATH = Path("tools", f"mpy-cross{Path(sys.executable).suffix}").resolve()
 
 
-def check_dirs() -> None:
-    os.makedirs(LIB_DIR, exist_ok=True)
-    os.makedirs(TOOLS_DIR, exist_ok=True)
-    os.makedirs(COMPILED_DIR, exist_ok=True)
+def ensure_adafruit_libraries() -> None:
+    # Directory where the libraries shall be located
+    target_dir = LIB_DIR.joinpath("adafruit-circuitpython-bundle-py")
+    # GitHub repository from which to download the bundle from
+    repo = "adafruit/Adafruit_CircuitPython_Bundle"
 
+    print("### Checking Adafruit CircuitPython library bundle")
 
-def download_adafruit_bundle(target_dir: Path, repo: str = "adafruit/Adafruit_CircuitPython_Bundle") -> None:
+    if target_dir.is_dir():
+        print(f"Library bundle already exists in {target_dir}")
+        return
+
     # Get URL of the latest release archive
     with urllib.request.urlopen(f"https://api.github.com/repos/{repo}/releases/latest", timeout=5) as rsp:
         jsn = json.loads(rsp.read())
@@ -42,14 +49,9 @@ def download_adafruit_bundle(target_dir: Path, repo: str = "adafruit/Adafruit_Ci
         with zipfile.ZipFile(BytesIO(rsp.read())) as zf:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 zf.extractall(tmp_dir)
-                shutil.move(next(os.scandir(tmp_dir)), target_dir)
-
-
-def check_adafruit_libraries() -> None:
-    dp = LIB_DIR.joinpath("adafruit-circuitpython-bundle-py")
-
-    if not dp.is_dir():
-        download_adafruit_bundle(dp)
+                # Move the extracted directory to the target directory
+                extracted_dir = next(os.scandir(tmp_dir)).path
+                shutil.move(extracted_dir, target_dir)
 
 
 def check_module_requirements(script: Path) -> List[Module]:
@@ -76,8 +78,7 @@ def download_mpy_cross() -> Path:
     base_prefix = "bin/mpy-cross/"
     web_url = f"{bucket_url}index.html?prefix={base_prefix}"
 
-    # Use the same extension as the current Python executable to ensure simple cross-platform usage
-    mpy_cross = TOOLS_DIR.joinpath(f"mpy-cross{Path(sys.executable).suffix}")
+    mpy_cross = MPY_CROSS_PATH
 
     if os.access(mpy_cross, os.X_OK):
         print(f"Using existing mpy-cross binary {mpy_cross} (skipping download from {web_url})")
@@ -120,6 +121,7 @@ def download_mpy_cross() -> Path:
     url = f"{bucket_url}{base_prefix}{files[0]}"
     print(f"Downloading {url} to {mpy_cross}")
 
+    mpy_cross.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(url) as rsp:
         with open(mpy_cross, "wb") as fp:
             fp.write(rsp.read())
@@ -170,9 +172,8 @@ def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Pa
                 print(f"Recompiling {fp_in} to {fp_out} (changed)")
         else:
             print(f"Compiling {fp_in} to {fp_out} (new)")
-
-        # Make sure that the output directory exists
-        fp_out.parent.mkdir(parents=True, exist_ok=True)
+            # Make sure that the output directory exists
+            fp_out.parent.mkdir(parents=True, exist_ok=True)
 
         workers[fp_in, fp_out] = subprocess.Popen([
             mpy_cross.as_posix(),
@@ -244,8 +245,7 @@ def main() -> None:
     # No need to follow
     # https://learn.adafruit.com/welcome-to-circuitpython/pycharm-and-circuitpython#creating-a-project-on-a-computers-file-system-3105042
     # as this script copies all required files to the device and keeps them in sync.
-    check_dirs()
-    check_adafruit_libraries()
+    ensure_adafruit_libraries()
     modules = check_module_requirements(MAIN_SCRIPT)
     mpy_files = compile_modules(modules)
 
