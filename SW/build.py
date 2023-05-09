@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import List, Iterable, Tuple, Dict, Optional, Collection
 from xml.etree import ElementTree
 
+# Note: all files from the main script's directory will be copied to the target CircuitPython drive!
+MAIN_SCRIPT = Path("src", "code.py").resolve()
 LIB_DIR = Path("lib").resolve()
-SRC_DIR = Path("src").resolve()
 TOOLS_DIR = Path("tools").resolve()
 COMPILED_DIR = Path("compiled", "lib").resolve()
 DEPLOY_DIR_CFG_FILE = Path("circuitpy_drive.txt").resolve()
@@ -25,7 +26,6 @@ DEPLOY_DIR_CFG_FILE = Path("circuitpy_drive.txt").resolve()
 
 def check_dirs() -> None:
     os.makedirs(LIB_DIR, exist_ok=True)
-    os.makedirs(SRC_DIR, exist_ok=True)
     os.makedirs(TOOLS_DIR, exist_ok=True)
     os.makedirs(COMPILED_DIR, exist_ok=True)
 
@@ -206,20 +206,21 @@ def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Pa
 def check_circuitpy_drive() -> Optional[Path]:
     if not DEPLOY_DIR_CFG_FILE.is_file():
         DEPLOY_DIR_CFG_FILE.write_text("Specify your CircuitPython drive path here (e.g. /media/CIRCUITPY or I:\\)\n")
-        print(f"Configuration file {DEPLOY_DIR_CFG_FILE} did not exist, auto-copy disabled")
+        print(f"\nConfiguration file {DEPLOY_DIR_CFG_FILE} did not exist, auto-copy disabled")
         return None
 
     path = Path(DEPLOY_DIR_CFG_FILE.read_text().strip()).resolve()
     if not path.is_dir():
-        print(f"Configuration file {DEPLOY_DIR_CFG_FILE} contains invalid path ({path}), auto-copy disabled")
+        print(f"\nConfiguration file {DEPLOY_DIR_CFG_FILE} contains invalid path ({path}), auto-copy disabled")
         return None
 
     return path
 
 
-def sync_files(sources: Iterable[Path], libs: Iterable[Path], target_drive: Path) -> None:
+def sync_files(libs: Iterable[Path], target_drive: Path) -> None:
+    main_dir = MAIN_SCRIPT.parent
     files = {
-        **{fp: target_drive.joinpath(fp.name) for fp in sources},
+        **{fp: target_drive.joinpath(fp.relative_to(main_dir)) for fp in main_dir.glob("**/*") if fp.is_file()},
         **{fp: target_drive.joinpath("lib", fp.name) for fp in libs}
     }
 
@@ -235,6 +236,7 @@ def sync_files(sources: Iterable[Path], libs: Iterable[Path], target_drive: Path
         else:
             print(f"Deploying {src} -> {dst}")
 
+        dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
 
 
@@ -242,18 +244,15 @@ def main() -> None:
     # No need to follow
     # https://learn.adafruit.com/welcome-to-circuitpython/pycharm-and-circuitpython#creating-a-project-on-a-computers-file-system-3105042
     # as this script copies all required files to the device and keeps them in sync.
-    main_script = SRC_DIR.joinpath("code.py")
-    boot_script = SRC_DIR.joinpath("boot.py")
-
     check_dirs()
     check_adafruit_libraries()
-    modules = check_module_requirements(main_script)
+    modules = check_module_requirements(MAIN_SCRIPT)
     mpy_files = compile_modules(modules)
 
-    # Optionally cpy all files to the device
+    # Optionally copy all files to the device
     target_drive = check_circuitpy_drive()
     if target_drive:
-        sync_files([main_script, boot_script], mpy_files, target_drive)
+        sync_files(mpy_files, target_drive)
 
 
 main()
