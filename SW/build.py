@@ -16,19 +16,18 @@ from pathlib import Path
 from typing import List, Iterable, Tuple, Dict, Optional, Collection
 from xml.etree import ElementTree
 
-lib_dir = Path("lib")
-src_dir = Path("src")
-tools_dir = Path("tools")
-compiled_dir = Path("compiled", "lib")
-
-mpy_cross = tools_dir.joinpath(f"mpy-cross{Path(sys.executable).suffix}").resolve()
+LIB_DIR = Path("lib").resolve()
+SRC_DIR = Path("src").resolve()
+TOOLS_DIR = Path("tools").resolve()
+COMPILED_DIR = Path("compiled", "lib").resolve()
+DEPLOY_DIR_CFG_FILE = Path("circuitpy_drive.txt").resolve()
 
 
 def check_dirs() -> None:
-    os.makedirs(lib_dir, exist_ok=True)
-    os.makedirs(src_dir, exist_ok=True)
-    os.makedirs(tools_dir, exist_ok=True)
-    os.makedirs(compiled_dir, exist_ok=True)
+    os.makedirs(LIB_DIR, exist_ok=True)
+    os.makedirs(SRC_DIR, exist_ok=True)
+    os.makedirs(TOOLS_DIR, exist_ok=True)
+    os.makedirs(COMPILED_DIR, exist_ok=True)
 
 
 def download_adafruit_bundle(target_dir: Path, repo: str = "adafruit/Adafruit_CircuitPython_Bundle") -> None:
@@ -47,22 +46,20 @@ def download_adafruit_bundle(target_dir: Path, repo: str = "adafruit/Adafruit_Ci
 
 
 def check_adafruit_libraries() -> None:
-    dp = lib_dir.joinpath("adafruit-circuitpython-bundle-py").resolve()
+    dp = LIB_DIR.joinpath("adafruit-circuitpython-bundle-py")
 
     if not dp.is_dir():
         download_adafruit_bundle(dp)
 
 
-def check_module_requirements(for_script: Path) -> List[Module]:
-    script = for_script.resolve()
-
+def check_module_requirements(script: Path) -> List[Module]:
     print(f"### Checking module requirements for {script}")
 
     # The target script will be run on the target device using CircuitPython runtime, not the runtime
     # and environment that this current script is running in. Therefore, do not use default sys.path
     # for importing the modules, but use the CircuitPython library paths.
-    finder = ModuleFinder(path=[script.parent.as_posix(), lib_dir.resolve().as_posix()] +
-                               [dp.as_posix() for dp in lib_dir.resolve().glob("*/lib")])
+    finder = ModuleFinder(path=[script.parent.as_posix(), LIB_DIR.as_posix()] +
+                               [dp.as_posix() for dp in LIB_DIR.glob("*/lib")])
     finder.run_script(script.as_posix())
     # All "non-file" modules are built-in modules
     print(f"{script} uses built-in modules: {', '.join(m.__name__ for m in finder.modules.values() if not m.__file__)}")
@@ -74,14 +71,17 @@ def check_module_requirements(for_script: Path) -> List[Module]:
     return modules
 
 
-def download_mpy_cross() -> None:
+def download_mpy_cross() -> Path:
     bucket_url = "https://adafruit-circuit-python.s3.amazonaws.com/"
     base_prefix = "bin/mpy-cross/"
     web_url = f"{bucket_url}index.html?prefix={base_prefix}"
 
+    # Use the same extension as the current Python executable to ensure simple cross-platform usage
+    mpy_cross = TOOLS_DIR.joinpath(f"mpy-cross{Path(sys.executable).suffix}")
+
     if os.access(mpy_cross, os.X_OK):
         print(f"Using existing mpy-cross binary {mpy_cross} (skipping download from {web_url})")
-        return
+        return mpy_cross
 
     # Try to get just the file for the current platform. Example file names for version 8.0.5:
     #   mpy-cross-macos-11-8.0.5-arm64
@@ -126,14 +126,12 @@ def download_mpy_cross() -> None:
     # Make the file executable
     mpy_cross.chmod(mpy_cross.stat().st_mode | stat.S_IEXEC)
 
-
-def get_existing_compiled_modules() -> List[Path]:
-    return [p.resolve() for p in compiled_dir.glob("**/*.mpy")]
+    return mpy_cross
 
 
 def get_module_paths(modules: Collection[Module]) -> Iterable[Tuple[Path, Path]]:
     for module in sorted(modules, key=lambda m: m.__file__):
-        fp_in = Path(module.__file__)
+        fp_in = Path(module.__file__).resolve()
 
         # Directory structure of the compiled modules must stay the same as the original modules!
         if module.__name__ != fp_in.stem:
@@ -147,18 +145,18 @@ def get_module_paths(modules: Collection[Module]) -> Iterable[Tuple[Path, Path]]
             # This is a single-file module
             sub_dirs = []
 
-        fp_out = compiled_dir.joinpath(*sub_dirs, fp_in.stem + ".mpy")
+        fp_out = COMPILED_DIR.joinpath(*sub_dirs, fp_in.stem + ".mpy")
 
-        yield fp_in.resolve(), fp_out.resolve()
+        yield fp_in, fp_out
 
 
 def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Path]:
-    print(f"### Compiling {len(modules)} modules to {compiled_dir}")
+    print(f"### Compiling {len(modules)} modules to {COMPILED_DIR}")
 
     # mpy-cross is used for compiling Python modules to bytecode
-    download_mpy_cross()
+    mpy_cross = download_mpy_cross()
 
-    existing_files = get_existing_compiled_modules()
+    existing_files = COMPILED_DIR.glob("**/*.mpy")
 
     workers: Dict[Tuple[Path, Path], Optional[subprocess.Popen]] = {}
     for fp_in, fp_out in get_module_paths(modules):
@@ -206,17 +204,14 @@ def compile_modules(modules: Collection[Module], debug: bool = False) -> List[Pa
 
 
 def check_circuitpy_drive() -> Optional[Path]:
-    cfg_fp = Path("circuitpy_drive.txt")
-    prompt = "Specify your CircuitPython drive path here (e.g. /media/CIRCUITPY or I:\\)"
-
-    if not cfg_fp.is_file():
-        cfg_fp.write_text(prompt + "\n")
-        print(f"Configuration file {cfg_fp.resolve()} did not exist, auto-copy disabled")
+    if not DEPLOY_DIR_CFG_FILE.is_file():
+        DEPLOY_DIR_CFG_FILE.write_text("Specify your CircuitPython drive path here (e.g. /media/CIRCUITPY or I:\\)\n")
+        print(f"Configuration file {DEPLOY_DIR_CFG_FILE} did not exist, auto-copy disabled")
         return None
 
-    path = Path(cfg_fp.read_text().strip())
+    path = Path(DEPLOY_DIR_CFG_FILE.read_text().strip()).resolve()
     if not path.is_dir():
-        print(f"Configuration file {cfg_fp.resolve()} contains invalid path, auto-copy disabled")
+        print(f"Configuration file {DEPLOY_DIR_CFG_FILE} contains invalid path ({path}), auto-copy disabled")
         return None
 
     return path
@@ -228,7 +223,7 @@ def sync_files(sources: Iterable[Path], libs: Iterable[Path], target_drive: Path
         **{fp: target_drive.joinpath("lib", fp.name) for fp in libs}
     }
 
-    print(f"### Syncing {len(files)} files to {target_drive.resolve()}")
+    print(f"### Syncing {len(files)} files to {target_drive}")
 
     for src, dst in files.items():
         if dst.is_file():
@@ -247,8 +242,8 @@ def main() -> None:
     # No need to follow
     # https://learn.adafruit.com/welcome-to-circuitpython/pycharm-and-circuitpython#creating-a-project-on-a-computers-file-system-3105042
     # as this script copies all required files to the device and keeps them in sync.
-    main_script = src_dir.joinpath("code.py")
-    boot_script = src_dir.joinpath("boot.py")
+    main_script = SRC_DIR.joinpath("code.py")
+    boot_script = SRC_DIR.joinpath("boot.py")
 
     check_dirs()
     check_adafruit_libraries()
