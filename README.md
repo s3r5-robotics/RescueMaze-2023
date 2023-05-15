@@ -10,6 +10,7 @@
    ```shell
    esptool.py --port <port> --baud 921600 write_flash --flash_mode dio --flash_freq 80m --flash_size 16MB --erase-all 0x0000 SW/lilygo-thmi-circuitpython.bin
    ```
+   If `esptool.py` is not found, check if you executed `pip install SW/requirements.txt`, or try with just `esptool` instead of `esptool.py`.
 
 3. Reset the chip to normal mode by pressing the *RESET* button again
 
