@@ -145,7 +145,8 @@ DYN_BROADCAST_ID = const(0xFE)
 # | 0xFF | 0xFF | ID | LEN | ERROR | VALUE_1-VALUE_N | CHECKSUM |
 
 class Dynamixel:
-    def __init__(self, uart: UART, motor_id: int, ping: bool = True):
+    def __init__(self, uart: UART, motor_id: int, ping: bool = True, log_retries: bool = False):
+        self.log_retries = log_retries
         self._uart = uart
         self.last_error = DYN_ERR_INVALID
         self.id = motor_id
@@ -189,7 +190,7 @@ class Dynamixel:
         if not rx_len:
             return b''
 
-        if len(rsp) != rx_len:
+        if (not rsp) or len(rsp) != rx_len:
             raise RuntimeError(f"Could not exec 0x{instruction:02x} on motor ID {self.id}")
         self.last_error = rsp[4]
         if self.last_error != DYN_ERR_NONE:
@@ -201,6 +202,8 @@ class Dynamixel:
         try:
             return self._write_command(instruction, write_data, response_len)
         except RuntimeError:
+            if self.log_retries:
+                print(f"Retrying command 0x{instruction:02x} for Dynamixel motor ID {self.id}")
             time.sleep(0.005)
         return self._write_command(instruction, write_data, response_len)
 
