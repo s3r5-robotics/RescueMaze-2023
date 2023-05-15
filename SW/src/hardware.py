@@ -4,7 +4,9 @@ import time
 import board
 import busio
 import digitalio
+import displayio
 import microcontroller
+import paralleldisplay
 # noinspection PyUnresolvedReferences
 from micropython import const
 
@@ -12,11 +14,12 @@ import adafruit_vl53l1x
 import dynamixel
 import neopixel
 from adafruit_debouncer import Button
+from adafruit_display_shapes.rect import Rect
+from adafruit_st7789 import ST7789
 
 try:
     # This is only needed for typing
     from typing import Type
-    import displayio
 except ImportError:
     pass
 
@@ -168,20 +171,15 @@ def i2c_scan(i2c_: board.I2C = i2c) -> None:
         i2c_.unlock()
 
 
-def init_display(built_in: bool) -> displayio.Display:
-    import displayio
-
+def init_display() -> displayio.Display:
     # Send one pulse to set max. brightness
     bl = digitalio.DigitalInOut(board.LCD_BL)
     bl.switch_to_output(value=False)
     bl.value = True
 
-    if built_in:
-        # noinspection PyUnresolvedReferences
+    # Use built-in display initialized during board initialization, if available
+    if hasattr(board, "DISPLAY"):
         return board.DISPLAY
-
-    import paralleldisplay
-    from adafruit_st7789 import ST7789
 
     # The parallel bus and pins are then in use by the display until displayio.release_displays() is called
     # even after a reload. (It does this so CircuitPython can use the display after your code is done.) So,
@@ -198,10 +196,7 @@ def init_display(built_in: bool) -> displayio.Display:
 
 
 def display_test():
-    import displayio
-    from adafruit_display_shapes.rect import Rect
-
-    dsp = init_display(False)
+    dsp = init_display()
 
     # Make the display context
     splash = displayio.Group()
