@@ -1,8 +1,37 @@
-import usb_midi
-import usb_hid
-import wifi
+# Disable unused modules
 
-usb_midi.disable()
-usb_hid.disable()
+# noinspection PyBroadException
+try:
+    # noinspection PyPackageRequirements
+    import usb_midi
 
-wifi.radio.enabled = False
+    usb_midi.disable()
+except Exception:
+    pass
+
+# noinspection PyBroadException
+try:
+    # noinspection PyPackageRequirements
+    import usb_hid
+
+    usb_hid.disable()
+except Exception:
+    pass
+
+# noinspection PyBroadException
+try:
+    # noinspection PyPackageRequirements
+    import wifi
+
+    wifi.radio.enabled = False
+except Exception:
+    pass
+
+# noinspection PyBroadException
+try:
+    # noinspection PyPackageRequirements
+    import _bleio
+
+    _bleio.adapter.enabled = False
+except Exception:
+    pass
