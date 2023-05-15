@@ -20,8 +20,12 @@ try:
 except ImportError:
     pass
 
-# noinspection PyUnresolvedReferences
-i2c = busio.I2C(board.GROVE1_PIN4, board.GROVE1_PIN3, frequency=400000)
+try:
+    # noinspection PyUnresolvedReferences
+    i2c = busio.I2C(board.GROVE1_PIN4, board.GROVE1_PIN3, frequency=400000)
+except RuntimeError as e:
+    print("Error while initializing I2C:", e)
+    i2c = None
 
 
 class Motor(dynamixel.Dynamixel):
@@ -62,9 +66,7 @@ class Motors:
     @classmethod
     def init(cls):
         # noinspection PyUnresolvedReferences
-        uart: busio.UART = board.UART_GROVE3()
-        uart.baudrate = 1000000
-        uart.timeout = 0.1
+        uart = busio.UART(tx=board.GROVE3_PIN3, rx=board.GROVE3_PIN4, baudrate=1000000, timeout=0.1)
 
         cls.l = Motor(uart, 6, reverse_direction=True)
         cls.r = Motor(uart, 4)
