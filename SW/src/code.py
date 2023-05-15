@@ -11,7 +11,6 @@ try:
     # This is only needed for typing
     from typing import Tuple, Optional
     from adafruit_debouncer import Button
-    from busio import I2C, UART
     import neopixel
 except ImportError:
     pass
@@ -113,15 +112,26 @@ def main(loop_frequency: int = 50):
         button.update()
 
 
-try:
-    motors.init()
-except Exception as e:
-    print("Error initializing motors:", e)
+def init() -> bool:
+    init_ok = True
 
-try:
-    ds.init()
-except Exception as e:
-    print("Error initializing distance sensors:", e)
+    try:
+        motors.init()
+    except Exception as e:
+        print("Error initializing motors:", e)
+        init_ok = False
 
-while True:
-    main()
+    try:
+        ds.init()
+    except Exception as e:
+        print("Error initializing distance sensors:", e)
+        init_ok = False
+
+    return init_ok
+
+
+if init():
+    while True:
+        main()
+else:
+    print("Initialization failed, exiting")
