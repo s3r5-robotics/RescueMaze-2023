@@ -1,1 +1,2 @@
 circuitpython-stubs  # For CircuitPython code completion in IDE
+tensorflow
